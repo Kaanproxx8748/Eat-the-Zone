@@ -1,105 +1,154 @@
-const Player = require('./player');
-const { isPointInPolygon, linesIntersect } = require('./math');
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
 
-class Game {
-    constructor(io) {
-        this.io = io;
-        this.players = {};
-        this.foods = [];
-        this.arenaSize = 2000;
-        
-        // Başlangıçta 200 tane yem oluştur
-        for(let i = 0; i < 200; i++) this.spawnFood();
+let isPlaying = false;
+let mouseX = 0;
+let mouseY = 0;
+let cameraX = 0;
+let cameraY = 0;
 
-        // Saniyede 60 kere oyun durumunu güncelle
-        setInterval(() => this.update(), 1000 / 60);
-    }
+// Ekran boyutu değiştiğinde Canvas'ı tam ekrana ayarla
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas(); // İlk açılışta boyutu ayarla
 
-    spawnFood() {
-        this.foods.push({
-            id: Math.random().toString(36).substr(2, 9),
-            x: Math.floor(Math.random() * this.arenaSize),
-            y: Math.floor(Math.random() * this.arenaSize)
-        });
-    }
+// Oyuncu fareyi hareket ettirdiğinde x,y koordinatlarını kaydet
+window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+});
 
-    addPlayer(socketId, name) {
-        this.players[socketId] = new Player(socketId, name);
-    }
-
-    removePlayer(socketId) {
-        delete this.players[socketId];
-    }
-
-    handleInput(socketId, angle) {
-        if(this.players[socketId]) {
-            this.players[socketId].angle = angle;
-        }
-    }
-
-    update() {
-        // Bütün oyuncuları hareket ettir ve alan kapatmalarını kontrol et
-        for (let id in this.players) {
-            let p = this.players[id];
-            p.update();
-            this.checkEnclosure(p); // Alan kapattı mı?
-        }
-        
-        // Yem sayısı azaldıkça yenilerini ekle
-        while(this.foods.length < 200) {
-            this.spawnFood();
-        }
-
-        // Bütün oyunculara yeni koordinatları gönder
-        this.io.emit('gameState', {
-            players: this.players,
-            foods: this.foods
-        });
-    }
-
-    checkEnclosure(player) {
-        const trail = player.trail;
-        if (trail.length < 5) return; // Alan oluşması için yeterli çizgi yok
-
-        // Şimdiki konumumuz ile bir önceki noktamız arasındaki çizgi (Kafamız)
-        const currentP1 = trail[trail.length - 1];
-        const currentP2 = { x: player.x, y: player.y };
-
-        // Kafamız, eski kuyruğumuzdaki herhangi bir çizgiyi kesiyor mu?
-        // Son 3 çizgiyi kontrol etmiyoruz çünkü kafamız onlara zaten çok yakın
-        for (let i = 0; i < trail.length - 3; i++) {
-            const p1 = trail[i];
-            const p2 = trail[i + 1];
-
-            // Kesişme bulduk! (Kapalı alan oluştu)
-            if (linesIntersect(p1, p2, currentP1, currentP2)) {
-                
-                // Kesiştiği noktadan şu anki yere kadar olan noktaları al = KAPALI ALAN (Poligon)
-                const polygon = trail.slice(i);
-                polygon.push(currentP2); 
-
-                // Yemleri kontrol et, hangileri içerde kaldı?
-                let eatenCount = 0;
-                this.foods = this.foods.filter(food => {
-                    if (isPointInPolygon(food, polygon)) {
-                        eatenCount++; // Yem poligonun içindeyse sayacı artır
-                        return false; // Listeden (haritadan) sil
-                    }
-                    return true; // Dışındaysa haritada bırak
-                });
-
-                if (eatenCount > 0) {
-                    player.score += eatenCount;
-                    console.log(`${player.name}, ${eatenCount} yem yedi! Toplam Puan: ${player.score}`);
-                    // (İsteğe bağlı) Yedikçe player.speed veya kuyruk uzunluğu artırılabilir
-                }
-
-                // Alan kapattıktan sonra düğüm oluşmaması için oyuncunun kuyruğunu temizle
-                player.trail = [{ x: player.x, y: player.y }];
-                break; // Aynı karede birden fazla kesişme aramaya gerek yok
-            }
-        }
+function initGame() {
+    if (!isPlaying) {
+        isPlaying = true;
+        gameLoop(); // Çizim döngüsünü başlat
     }
 }
 
-module.exports = Game;
+// Oyunun ana döngüsü (Saniyede 60 kare hızında çalışır)
+function gameLoop() {
+    if (!isPlaying) return;
+    
+    updateInput(); // Farenin baktığı yönü hesapla ve sunucuya gönder
+    draw();        // Ekranı çiz
+    
+    requestAnimationFrame(gameLoop);
+}
+
+function updateInput() {
+    if (myId && gameState.players[myId]) {
+        // Ekranın tam ortası bizim yılanımız olduğu için farenin merkeze olan açısını hesaplıyoruz
+        const dx = mouseX - (canvas.width / 2);
+        const dy = mouseY - (canvas.height / 2);
+        const angle = Math.atan2(dy, dx);
+        
+        // Bu açıyı (radyan cinsinden) sunucuya gönder
+        socket.emit('input', { angle: angle });
+    }
+}
+
+function draw() {
+    // 1. Ekranı temizle (Arka plan rengi)
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (!myId || !gameState.players[myId]) return;
+
+    // Kamerayı kendi yılanımızın üzerine ortala
+    const me = gameState.players[myId];
+    cameraX = me.x - (canvas.width / 2);
+    cameraY = me.y - (canvas.height / 2);
+
+    ctx.save();
+    ctx.translate(-cameraX, -cameraY); // Dünyayı kameranın tersine kaydır
+
+    // 2. Arka plandaki ızgarayı (grid) çiz (hareket hissi vermek için)
+    drawGrid();
+
+    // 3. Yemleri çiz
+    gameState.foods.forEach(food => {
+        ctx.fillStyle = '#f1c40f'; // Altın sarısı yemler
+        ctx.beginPath();
+        ctx.arc(food.x, food.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    // 4. Bütün oyuncuları ve kuyruklarını çiz
+    for (let id in gameState.players) {
+        const player = gameState.players[id];
+        const isMe = (id === myId);
+        drawPlayer(player, isMe);
+    }
+
+    ctx.restore();
+}
+
+function drawGrid() {
+    ctx.strokeStyle = '#2c3e50';
+    ctx.lineWidth = 1;
+    const gridSize = 50; // Karelerin büyüklüğü
+    
+    // Ekranda sadece görünen kısmı çizmek için optimizasyon
+    const startX = Math.floor(cameraX / gridSize) * gridSize;
+    const startY = Math.floor(cameraY / gridSize) * gridSize;
+    const endX = startX + canvas.width + gridSize;
+    const endY = startY + canvas.height + gridSize;
+
+    ctx.beginPath();
+    for (let x = startX; x < endX; x += gridSize) {
+        ctx.moveTo(x, startY);
+        ctx.lineTo(x, endY);
+    }
+    for (let y = startY; y < endY; y += gridSize) {
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+    }
+    ctx.stroke();
+}
+
+function drawPlayer(player, isMe) {
+    // 1. Vücut Boğumlarını Çiz (Sondan başa doğru çiziyoruz ki kafa kuyruğun üstünde kalsın)
+    if (player.body && player.body.length > 0) {
+        for (let i = player.body.length - 1; i >= 0; i--) {
+            const segment = player.body[i];
+            
+            // Boğumun içi
+            ctx.fillStyle = player.color || '#e74c3c';
+            ctx.beginPath();
+            ctx.arc(segment.x, segment.y, 11, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Boğumun dış kenarlığı (Slither.io tarzı görünüm için)
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    }
+
+    // 2. Yılanın Kafasını Çiz (Kafa boğumlardan biraz daha büyük)
+    ctx.fillStyle = isMe ? '#27ae60' : (player.color || '#c0392b'); 
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 3. Gözleri Çiz (Tatlı bir yılan görünümü)
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.arc(player.x - 5, player.y - 5, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(player.x + 5, player.y - 5, 4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'black';
+    ctx.beginPath(); ctx.arc(player.x - 5, player.y - 5, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(player.x + 5, player.y - 5, 2, 0, Math.PI*2); ctx.fill();
+
+    // 4. Oyuncu İsmini Çiz
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    // İsmi yılanın biraz daha üstünde göster
+    ctx.fillText(player.name, player.x, player.y - 25);
+}
