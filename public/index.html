@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alan Kapatma Oyunu</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- Oyuna Giriş Ekranı -->
+    <div id="start-screen">
+        <div class="menu-box">
+            <h1>Yılan IO</h1>
+            <p>Alanı kapat, içindeki yemleri ye!</p>
+            <input type="text" id="username-input" placeholder="Kullanıcı Adın" maxlength="15">
+            <button id="play-btn">Oyuna Başla</button>
+        </div>
+    </div>
+
+    <!-- Oyunun çizileceği alan -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Kütüphaneler ve Oyun Scriptleri -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="js/socket.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
